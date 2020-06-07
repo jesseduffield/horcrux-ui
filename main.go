@@ -10,8 +10,10 @@ import (
 
 	"github.com/jesseduffield/fyne"
 	fyneApp "github.com/jesseduffield/fyne/app"
+	"github.com/jesseduffield/fyne/cmd/fyne_demo/screens"
 	"github.com/jesseduffield/fyne/dialog"
 	"github.com/jesseduffield/fyne/layout"
+	"github.com/jesseduffield/fyne/theme"
 	"github.com/jesseduffield/fyne/widget"
 	"github.com/jesseduffield/horcrux/pkg/commands"
 	"github.com/skratchdot/open-golang/open"
@@ -102,7 +104,7 @@ func main() {
 			goButton.Disable()
 		}
 
-		w.SetContent(widget.NewVBox(
+		createTab := widget.NewVBox(
 			widget.NewLabel("With Horcrux you can create horcruxes out of your files to be recombined again without requiring a password"),
 			widget.NewVBox(
 				layout.NewSpacer(),
@@ -165,7 +167,31 @@ func main() {
 				),
 				layout.NewSpacer(),
 			),
-		))
+		)
+
+		combineTab := widget.NewVBox(
+			widget.NewVBox(
+				layout.NewSpacer(),
+				widget.NewHBox(
+					widget.NewButton("Select directory", func() {
+						fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+							dialog.NewError(errors.New("Combining horcruxes is not yet implemented"), w)
+						}, w)
+						fd.Show()
+					}),
+					widget.NewLabel(app.sourcePath),
+				),
+			))
+
+		tabs := widget.NewTabContainer(
+			widget.NewTabItemWithIcon("Create Horcruxes", theme.ViewFullScreenIcon(), createTab),
+			widget.NewTabItemWithIcon("Combine Horcruxes", theme.ViewRestoreIcon(), combineTab),
+			widget.NewTabItemWithIcon("About", theme.InfoIcon(), screens.WidgetScreen()))
+
+		tabs.SetTabLocation(widget.TabLocationLeading)
+		tabs.SelectTabIndex(0)
+
+		w.SetContent(tabs)
 	}
 
 	refresh()
