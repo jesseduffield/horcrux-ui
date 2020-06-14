@@ -43,8 +43,6 @@ type app struct {
 	horcruxThreshold       int
 }
 
-// attempt to obtain headers for them all and if you can't raise an error. Then append by path name.
-
 func includeString(haystack []string, needle string) bool {
 	for _, el := range haystack {
 		if el == needle {
