@@ -2,15 +2,18 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"log"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/jesseduffield/fyne"
 	fyneApp "github.com/jesseduffield/fyne/app"
-	"github.com/jesseduffield/fyne/cmd/fyne_demo/screens"
 	"github.com/jesseduffield/fyne/dialog"
 	"github.com/jesseduffield/fyne/layout"
 	"github.com/jesseduffield/fyne/theme"
@@ -21,22 +24,48 @@ import (
 
 type app struct {
 	fyneApp fyne.App
+	window  fyne.Window
 
-	horcruxCount         int
-	horcruxRequiredCount int
-	directoryPath        string
-	sourcePath           string
-	destinationPath      string
-	horcruxPaths         []string
+	tabIndex int
+
+	// for the create tab
+	horcruxCount          int
+	horcruxRequiredCount  int
+	sourcePath            string
+	createDestinationPath string
+
+	// for the combine tab
+	combineDestinationPath string
+	horcruxPaths           []string
+	horcruxValidationError string
+	horcruxTotal           int
+	horcruxThreshold       int
+}
+
+// attempt to obtain headers for them all and if you can't raise an error. Then append by path name.
+
+func includeString(haystack []string, needle string) bool {
+	for _, el := range haystack {
+		if el == needle {
+			return true
+		}
+	}
+	return false
 }
 
 const maxHorcruxCount = 7
 
 func newApp() *app {
+	fApp := fyneApp.New()
+	window := fApp.NewWindow("Horcrux")
+	window.Resize(fyne.Size{Width: 700, Height: 480})
+	window.SetFixedSize(true)
+
 	return &app{
-		fyneApp:              fyneApp.New(),
+		fyneApp:              fApp,
 		horcruxCount:         maxHorcruxCount,
 		horcruxRequiredCount: maxHorcruxCount,
+		window:               window,
 	}
 }
 
@@ -48,13 +77,43 @@ func numberOptions(limit int) []string {
 	return result
 }
 
+func (app *app) updateHorcruxes(paths []string) {
+	horcruxes, err := commands.GetHorcruxes(paths)
+	if err != nil {
+		dialog.ShowError(err, app.window)
+		return
+	}
+
+	if err := commands.ValidateHorcruxes(horcruxes); err != nil {
+		app.horcruxValidationError = err.Error()
+		app.combineDestinationPath = ""
+		app.horcruxThreshold = 1 // dummy values
+		app.horcruxTotal = 1
+	} else {
+		app.horcruxValidationError = ""
+		firstHorcrux := horcruxes[0]
+		originalFilename := firstHorcrux.GetHeader().OriginalFilename
+		path := horcruxes[0].GetPath()
+		app.combineDestinationPath = filepath.Join(filepath.Dir(path), originalFilename)
+		app.horcruxThreshold = firstHorcrux.GetHeader().Threshold
+		app.horcruxTotal = firstHorcrux.GetHeader().Total
+	}
+
+	app.horcruxPaths = paths
+}
+
 func main() {
 	app := newApp()
 	var refresh func()
 
-	w := app.fyneApp.NewWindow("Horcrux")
-
 	refresh = func() {
+		quitButton := widget.NewHBox(
+			layout.NewSpacer(),
+			widget.NewButton("Quit", func() {
+				app.fyneApp.Quit()
+			}),
+		)
+
 		horcruxCountRadio := widget.NewRadio(numberOptions(maxHorcruxCount), func(s string) {
 			horcruxCount, err := strconv.Atoi(s)
 			if err != nil {
@@ -88,69 +147,71 @@ func main() {
 			requiredCountRadio.Disable()
 		}
 
-		goButton := widget.NewButton("Create horcruxes", func() {
-			err := commands.Split(app.sourcePath, app.destinationPath, app.horcruxCount, app.horcruxRequiredCount)
+		createButton := widget.NewButton("Create horcruxes", func() {
+			err := commands.Split(app.sourcePath, app.createDestinationPath, app.horcruxCount, app.horcruxRequiredCount)
 			if err != nil {
-				dialog.ShowError(err, w)
+				dialog.ShowError(err, app.window)
 				return
 			}
-			if err := open.Start(app.destinationPath); err != nil {
-				dialog.ShowError(err, w)
+			if err := open.Start(app.createDestinationPath); err != nil {
+				dialog.ShowError(err, app.window)
 				return
 			}
-
 		})
 		if app.sourcePath == "" {
-			goButton.Disable()
+			createButton.Disable()
 		}
 
 		createTab := widget.NewVBox(
 			widget.NewLabel("With Horcrux you can create horcruxes out of your files to be recombined again without requiring a password"),
 			widget.NewVBox(
-				layout.NewSpacer(),
 				widget.NewHBox(
 					widget.NewButton("Select file", func() {
-						fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
-							if err == nil && reader == nil {
-								return
-							}
+						fd := dialog.NewFileOpen(func(readers []fyne.URIReadCloser, err error) {
 							if err != nil {
-								dialog.ShowError(err, w)
+								dialog.ShowError(err, app.window)
 								return
 							}
+							if len(readers) == 0 {
+								return
+							}
+							if len(readers) > 1 {
+								dialog.ShowError(errors.New("You must only select one file"), app.window)
+								return
+							}
+							reader := readers[0]
 
 							uri := reader.URI().String() // file:///Users/jesseduffield/tick.png
 							u, err := url.Parse(uri)
 							if err != nil {
-								dialog.ShowError(err, w)
+								dialog.ShowError(err, app.window)
 								return
 							}
 
 							stat, err := os.Stat(u.Path)
 							if err != nil {
-								dialog.ShowError(err, w)
+								dialog.ShowError(err, app.window)
 								return
 							}
 
 							if stat.IsDir() {
-								dialog.ShowError(errors.New("Must select a file, not a directory"), w)
+								dialog.ShowError(errors.New("Must select a file, not a directory"), app.window)
 								return
 							}
 
 							app.sourcePath = u.Path // /Users/jesseduffield/tick.png
-							if app.destinationPath == "" {
+							if app.createDestinationPath == "" {
 								basename := filepath.Base(u.Path)
 								basenameWithoutExt := strings.TrimSuffix(basename, filepath.Ext(basename))
-								app.destinationPath = filepath.Join(filepath.Dir(u.Path), basenameWithoutExt+"_horcruxes")
+								app.createDestinationPath = filepath.Join(filepath.Dir(u.Path), basenameWithoutExt+"_horcruxes")
 							}
 
 							refresh()
-						}, w)
+						}, app.window)
 						fd.Show()
 					}),
 					widget.NewLabel(app.sourcePath),
 				),
-				layout.NewSpacer(),
 				widget.NewVBox(
 					widget.NewLabel("Horcruxes to create"),
 					horcruxCountRadio,
@@ -159,42 +220,176 @@ func main() {
 					widget.NewLabel("Horcruxes required to recreate original file"),
 					requiredCountRadio,
 				),
-				layout.NewSpacer(),
 			),
 			widget.NewVBox(
 				widget.NewHBox(
-					goButton,
+					createButton,
 				),
-				layout.NewSpacer(),
 			),
+			layout.NewSpacer(),
+			quitButton,
 		)
+
+		horcruxPathWidgets := make([]fyne.CanvasObject, len(app.horcruxPaths))
+		for i, path := range app.horcruxPaths {
+			horcruxPathWidgets[i] = widget.NewHBox(
+				widget.NewButton("Remove", func() {
+					app.horcruxPaths = append(app.horcruxPaths[0:i], app.horcruxPaths[i+1:]...)
+					app.updateHorcruxes(app.horcruxPaths)
+					refresh()
+				}),
+				widget.NewLabel(path),
+			)
+		}
+
+		horcruxPathsBox := widget.NewVBox(horcruxPathWidgets...)
+
+		combineButton := widget.NewButton("Combine horcruxes", func() {
+			// we can work out what the directory will be here. It probably doesn't matter where you save it. You could copy it somewhere else afterwards
+			horcruxes, err := commands.GetHorcruxes(app.horcruxPaths)
+			if err != nil {
+				dialog.ShowError(err, app.window)
+				return
+			}
+
+			if err := commands.ValidateHorcruxes(horcruxes); err != nil {
+				app.horcruxValidationError = err.Error()
+			}
+
+			var combineHorcruxes func(bool)
+			combineHorcruxes = func(overwrite bool) {
+				err = commands.Bind(app.horcruxPaths, app.combineDestinationPath, overwrite)
+				if err != nil {
+					if err == os.ErrExist {
+						dialog.ShowConfirm("File exists", fmt.Sprintf("A file already exists at path %s. Overwrite file?", app.combineDestinationPath), func(overwriteResponse bool) {
+							if overwriteResponse {
+								combineHorcruxes(true)
+							}
+						}, app.window)
+					} else {
+						dialog.ShowError(err, app.window)
+					}
+					return
+				}
+
+				if err := open.Start(filepath.Dir(app.combineDestinationPath)); err != nil {
+					dialog.ShowError(err, app.window)
+					return
+				}
+			}
+
+			combineHorcruxes(false)
+
+		})
+		if len(app.horcruxPaths) == 0 || app.horcruxValidationError != "" || app.combineDestinationPath == "" {
+			combineButton.Disable()
+		}
+
+		validationErrorWidget := widget.NewLabelWithStyle(app.horcruxValidationError, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+		destinationText := ""
+		if app.combineDestinationPath != "" {
+			destinationText = fmt.Sprintf("Destination: %s", app.combineDestinationPath)
+		}
+		destinationWidget := widget.NewLabelWithStyle(destinationText, fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
 
 		combineTab := widget.NewVBox(
 			widget.NewVBox(
-				layout.NewSpacer(),
 				widget.NewHBox(
-					widget.NewButton("Select directory", func() {
-						fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
-							dialog.NewError(errors.New("Combining horcruxes is not yet implemented"), w)
-						}, w)
+					widget.NewButton("Select horcruxes", func() {
+						fd := dialog.NewFileOpen(func(readers []fyne.URIReadCloser, err error) {
+							if err != nil {
+								dialog.ShowError(err, app.window)
+								return
+							}
+							if len(readers) == 0 {
+								return
+							}
+
+							paths := []string{}
+							paths = append(paths, app.horcruxPaths...)
+
+							for _, reader := range readers {
+								path := strings.TrimPrefix(reader.URI().String(), "file://")
+								if includeString(paths, path) {
+									continue
+								}
+								paths = append(paths, path)
+							}
+
+							app.updateHorcruxes(paths)
+
+							refresh()
+						}, app.window)
 						fd.Show()
+						fd.SetMultiSelect(true)
 					}),
-					widget.NewLabel(app.sourcePath),
 				),
-			))
+				horcruxPathsBox,
+				validationErrorWidget,
+				destinationWidget,
+				widget.NewHBox(combineButton),
+			),
+			layout.NewSpacer(),
+			quitButton,
+		)
+
+		aboutTab := widget.NewVBox(
+			widget.NewVBox(
+				widget.NewLabel("Horcrux, created by Jesse Duffield"),
+				widget.NewButton("Github page", func() {
+					openUrlInBrowser("https://github.com/jesseduffield/horcrux-ui")
+				}),
+				widget.NewButton("Raise an issue", func() {
+					openUrlInBrowser("https://github.com/jesseduffield/horcrux-ui/issues/new")
+				}),
+				widget.NewButton("Sponsor me", func() {
+					openUrlInBrowser("https://github.com/sponsors/jesseduffield")
+				}),
+				widget.NewButton("Visit my website", func() {
+					openUrlInBrowser("https://jesseduffield.com/")
+				}),
+			),
+			layout.NewSpacer(),
+			quitButton,
+		)
 
 		tabs := widget.NewTabContainer(
 			widget.NewTabItemWithIcon("Create Horcruxes", theme.ViewFullScreenIcon(), createTab),
 			widget.NewTabItemWithIcon("Combine Horcruxes", theme.ViewRestoreIcon(), combineTab),
-			widget.NewTabItemWithIcon("About", theme.InfoIcon(), screens.WidgetScreen()))
+			widget.NewTabItemWithIcon("About", theme.InfoIcon(), aboutTab),
+		)
 
 		tabs.SetTabLocation(widget.TabLocationLeading)
-		tabs.SelectTabIndex(0)
+		tabs.SelectTabIndex(app.tabIndex)
+		tabs.OnChanged = func(tab *widget.TabItem, index int) {
+			app.tabIndex = index
+		}
 
-		w.SetContent(tabs)
+		app.window.SetContent(
+			tabs,
+		)
 	}
 
 	refresh()
 
-	w.ShowAndRun()
+	app.window.ShowAndRun()
+}
+
+func openUrlInBrowser(url string) {
+	var err error
+
+	switch runtime.GOOS {
+	case "linux":
+		err = exec.Command("xdg-open", url).Start()
+	case "windows":
+		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	case "darwin":
+		err = exec.Command("open", url).Start()
+	default:
+		err = fmt.Errorf("unsupported platform")
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+
 }
