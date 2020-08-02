@@ -1,4 +1,6 @@
 # Horcrux
+![](/Icon.png)
+
 GUI for Horcrux, made with [fyne.io](https://fyne.io/) (for the command-line version, see [here](https://github.com/jesseduffield/horcrux))
 
 ![](https://i.imgur.com/SsKn6Ap.png)
