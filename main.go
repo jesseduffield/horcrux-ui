@@ -222,6 +222,7 @@ func (app *app) createTab() fyne.CanvasObject {
 func (app *app) combineTab() fyne.CanvasObject {
 	horcruxPathWidgets := make([]fyne.CanvasObject, len(app.horcruxPaths))
 	for i, path := range app.horcruxPaths {
+		i := i
 		horcruxPathWidgets[i] = widget.NewHBox(
 			widget.NewButton("Remove", func() {
 				app.horcruxPaths = append(app.horcruxPaths[0:i], app.horcruxPaths[i+1:]...)
