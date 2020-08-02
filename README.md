@@ -52,5 +52,5 @@ A) This uses the (Shamir Secret Sharing Scheme)[https://en.wikipedia.org/wiki/Sh
 
 ## Alternatives (for command-line)
 
-* (ssss)[http://point-at-infinity.org/ssss/]. Works for keys but (as far as I know) not files themselves.
-* horcrux[https://github.com/kndyry/horcrux]. Looks like somebody beat me to both the name and concept, however this repo doesn't support thresholds of horcruxes
+* [ssss](http://point-at-infinity.org/ssss/). Works for keys but (as far as I know) not files themselves.
+* [horcrux](https://github.com/kndyry/horcrux). Looks like somebody beat me to both the name and concept, however this repo doesn't support thresholds of horcruxes
